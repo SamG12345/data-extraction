@@ -1,1 +1,1 @@
-"Welcome to 100 Days of Cloud Day 18" 
+This is an extraction of data of a website using automation tools of python.
