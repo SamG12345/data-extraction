@@ -1,0 +1,4 @@
+uv init   # package hancdler
+uv add playwright  # adding automation tools
+uv add playwright_stealth  # toolto bypass bot check
+uv run scraper.py  # run the program
