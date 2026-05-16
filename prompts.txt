@@ -1,3 +1,4 @@
+curl -LsSf https://astral.sh/uv/install.sh | sh  # install package manager
 uv init   # package hancdler
 uv add playwright  # adding automation tools
 uv add playwright_stealth  # toolto bypass bot check
