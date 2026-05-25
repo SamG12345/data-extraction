@@ -19,49 +19,44 @@ POST_TEXT = "Hello from Playwright! 🤖 #automation"
 async def login(page, username: str, password: str) -> None:
     """Log in to X.com."""
     print("[1/4] Navigating to login page …")
-    # Use 'domcontentloaded' – X.com never fully reaches 'networkidle'
     await page.goto("https://x.com/i/flow/login", wait_until="domcontentloaded", timeout=60_000)
-    # Give React/JS time to render the form
-    await page.wait_for_timeout(3_000)
 
-    # Enter username / email — try multiple selectors for resilience
+    # Wait for ANY input to appear (X renders inputs dynamically)
     print("[2/4] Entering username …")
-    try:
-        username_input = page.get_by_label("Phone, email, or username")
-        await username_input.wait_for(state="visible", timeout=20_000)
-    except PlaywrightTimeoutError:
-        # Fallback: grab the first visible text input on the page
-        username_input = page.locator("input[autocomplete='username'], input[name='text']").first
-        await username_input.wait_for(state="visible", timeout=10_000)
+    await page.wait_for_selector("input", state="visible", timeout=30_000)
+    await page.wait_for_timeout(1_500)   # let animations settle
 
-    await username_input.fill(username)
-    await page.get_by_role("button", name="Next").click()
+    # Fill the first visible input (always the username field on this page)
+    await page.locator("input:visible").first.fill(username)
+    await page.wait_for_timeout(500)
+
+    # Click Next
+    await page.locator("button:has-text('Next')").click()
     await page.wait_for_timeout(2_000)
 
-    # X sometimes asks for an email/phone verification step
+    # X sometimes shows an extra verification step (phone/email)
     try:
-        verify_input = page.get_by_label("Phone or email")
-        await verify_input.wait_for(state="visible", timeout=5_000)
-        print("    (verification prompt detected – entering username again)")
-        await verify_input.fill(username)
-        await page.get_by_role("button", name="Next").click()
-        await page.wait_for_timeout(2_000)
+        extra = page.locator("input:visible").first
+        await extra.wait_for(state="visible", timeout=4_000)
+        label_text = await page.locator("label:visible").first.inner_text()
+        if "phone" in label_text.lower() or "email" in label_text.lower():
+            print("    (verification prompt detected – entering username again)")
+            await extra.fill(username)
+            await page.locator("button:has-text('Next')").click()
+            await page.wait_for_timeout(2_000)
     except PlaywrightTimeoutError:
-        pass  # no extra verification needed
+        pass
 
     # Enter password
     print("[3/4] Entering password …")
-    try:
-        password_input = page.get_by_label("Password", exact=True)
-        await password_input.wait_for(state="visible", timeout=15_000)
-    except PlaywrightTimeoutError:
-        password_input = page.locator("input[type='password']").first
-        await password_input.wait_for(state="visible", timeout=10_000)
+    await page.wait_for_selector("input[type='password']", state="visible", timeout=15_000)
+    await page.locator("input[type='password']").fill(password)
+    await page.wait_for_timeout(500)
 
-    await password_input.fill(password)
-    await page.get_by_role("button", name="Log in").click()
+    # Click Log in
+    await page.locator("button:has-text('Log in')").click()
 
-    # Wait for home feed to confirm successful login
+    # Confirm redirect to home
     await page.wait_for_url("**/home", timeout=30_000)
     await page.wait_for_timeout(2_000)
     print("      ✓ Logged in successfully!")
@@ -71,27 +66,17 @@ async def create_post(page, text: str) -> None:
     """Compose and submit a post on X.com."""
     print("[4/4] Creating post …")
 
-    # Click the compose box — try multiple selectors
-    try:
-        compose_box = page.get_by_role("textbox", name="Post text")
-        await compose_box.wait_for(state="visible", timeout=15_000)
-    except PlaywrightTimeoutError:
-        compose_box = page.locator("[data-testid='tweetTextarea_0']").first
-        await compose_box.wait_for(state="visible", timeout=10_000)
-
-    await compose_box.click()
-    await compose_box.fill(text)
+    # Wait for the compose area
+    await page.wait_for_selector("[data-testid='tweetTextarea_0']", state="visible", timeout=20_000)
+    await page.locator("[data-testid='tweetTextarea_0']").click()
+    await page.wait_for_timeout(500)
+    await page.keyboard.type(text, delay=30)   # type naturally to avoid paste detection
     await page.wait_for_timeout(1_000)
 
-    # Click the "Post" button
-    try:
-        post_button = page.get_by_test_id("tweetButtonInline")
-        await post_button.wait_for(state="visible", timeout=10_000)
-    except PlaywrightTimeoutError:
-        post_button = page.locator("[data-testid='tweetButton']").first
-        await post_button.wait_for(state="visible", timeout=10_000)
-
-    await post_button.click()
+    # Submit the post
+    post_btn = page.locator("[data-testid='tweetButtonInline']")
+    await post_btn.wait_for(state="visible", timeout=10_000)
+    await post_btn.click()
     await page.wait_for_timeout(3_000)
     print(f'      ✓ Post submitted: "{text}"')
 
@@ -99,9 +84,9 @@ async def create_post(page, text: str) -> None:
 async def main() -> None:
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            headless=False,   # set True for background / CI runs
-            slow_mo=100,      # slight delay so actions look natural
-            args=["--disable-blink-features=AutomationControlled"],  # reduce bot detection
+            headless=False,
+            slow_mo=80,
+            args=["--disable-blink-features=AutomationControlled"],
         )
         context = await browser.new_context(
             viewport={"width": 1280, "height": 900},
@@ -119,7 +104,7 @@ async def main() -> None:
             await create_post(page, POST_TEXT)
         except PlaywrightTimeoutError as e:
             print(f"\n✗ Timeout error: {e}")
-            print("  → Check your internet connection or try again (X.com may be slow).")
+            print("  → The page may be loading slowly. Try increasing wait times or check your connection.")
         except Exception as e:
             print(f"\n✗ Unexpected error: {e}")
         finally:
