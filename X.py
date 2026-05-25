@@ -16,47 +16,86 @@ POST_TEXT = "Hello from Playwright! 🤖 #automation"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+async def click_next_button(page) -> None:
+    """Click the Next/Continue button — tries several strategies."""
+    # Strategy 1: data-testid (most stable)
+    for testid in ("LoginForm_Login_Button", "ocfEnterTextNextButton", "next_link"):
+        try:
+            btn = page.locator(f"[data-testid='{testid}']")
+            await btn.wait_for(state="visible", timeout=3_000)
+            await btn.click()
+            return
+        except PlaywrightTimeoutError:
+            pass
+
+    # Strategy 2: any button whose text contains 'next' or 'continue' (case-insensitive)
+    btn = page.locator("button").filter(has_text="Next")
+    count = await btn.count()
+    if count:
+        await btn.first.click()
+        return
+
+    # Strategy 3: press Enter on the current input
+    await page.keyboard.press("Enter")
+
+
 async def login(page, username: str, password: str) -> None:
     """Log in to X.com."""
     print("[1/4] Navigating to login page …")
     await page.goto("https://x.com/i/flow/login", wait_until="domcontentloaded", timeout=60_000)
 
-    # Wait for ANY input to appear (X renders inputs dynamically)
-    print("[2/4] Entering username …")
+    # Wait until at least one input is visible
     await page.wait_for_selector("input", state="visible", timeout=30_000)
-    await page.wait_for_timeout(1_500)   # let animations settle
+    await page.wait_for_timeout(2_000)   # let JS finish rendering
 
-    # Fill the first visible input (always the username field on this page)
-    await page.locator("input:visible").first.fill(username)
-    await page.wait_for_timeout(500)
+    # Step 1 – username
+    print("[2/4] Entering username …")
+    inp = page.locator("input:visible").first
+    await inp.click()
+    await inp.fill(username)
+    await page.wait_for_timeout(600)
+    await click_next_button(page)
+    await page.wait_for_timeout(2_500)
 
-    # Click Next
-    await page.locator("button:has-text('Next')").click()
-    await page.wait_for_timeout(2_000)
-
-    # X sometimes shows an extra verification step (phone/email)
+    # Step 1b – optional extra verification (phone / email)
     try:
-        extra = page.locator("input:visible").first
-        await extra.wait_for(state="visible", timeout=4_000)
-        label_text = await page.locator("label:visible").first.inner_text()
-        if "phone" in label_text.lower() or "email" in label_text.lower():
-            print("    (verification prompt detected – entering username again)")
+        label = await page.locator("label:visible").first.inner_text(timeout=3_000)
+        if any(w in label.lower() for w in ("phone", "email", "verify")):
+            print("    (extra verification prompt – re-entering username)")
+            extra = page.locator("input:visible").first
             await extra.fill(username)
-            await page.locator("button:has-text('Next')").click()
-            await page.wait_for_timeout(2_000)
-    except PlaywrightTimeoutError:
+            await page.wait_for_timeout(500)
+            await click_next_button(page)
+            await page.wait_for_timeout(2_500)
+    except Exception:
         pass
 
-    # Enter password
+    # Step 2 – password
     print("[3/4] Entering password …")
-    await page.wait_for_selector("input[type='password']", state="visible", timeout=15_000)
-    await page.locator("input[type='password']").fill(password)
-    await page.wait_for_timeout(500)
+    await page.wait_for_selector("input[type='password']", state="visible", timeout=20_000)
+    pwd = page.locator("input[type='password']").first
+    await pwd.click()
+    await pwd.fill(password)
+    await page.wait_for_timeout(600)
 
-    # Click Log in
-    await page.locator("button:has-text('Log in')").click()
+    # Click "Log in"
+    logged_in = False
+    for testid in ("LoginForm_Login_Button", "login-button"):
+        try:
+            btn = page.locator(f"[data-testid='{testid}']")
+            await btn.wait_for(state="visible", timeout=3_000)
+            await btn.click()
+            logged_in = True
+            break
+        except PlaywrightTimeoutError:
+            pass
+    if not logged_in:
+        btn = page.locator("button").filter(has_text="Log in")
+        if await btn.count():
+            await btn.first.click()
+        else:
+            await page.keyboard.press("Enter")
 
-    # Confirm redirect to home
     await page.wait_for_url("**/home", timeout=30_000)
     await page.wait_for_timeout(2_000)
     print("      ✓ Logged in successfully!")
@@ -66,14 +105,13 @@ async def create_post(page, text: str) -> None:
     """Compose and submit a post on X.com."""
     print("[4/4] Creating post …")
 
-    # Wait for the compose area
     await page.wait_for_selector("[data-testid='tweetTextarea_0']", state="visible", timeout=20_000)
-    await page.locator("[data-testid='tweetTextarea_0']").click()
+    box = page.locator("[data-testid='tweetTextarea_0']")
+    await box.click()
     await page.wait_for_timeout(500)
-    await page.keyboard.type(text, delay=30)   # type naturally to avoid paste detection
+    await page.keyboard.type(text, delay=40)
     await page.wait_for_timeout(1_000)
 
-    # Submit the post
     post_btn = page.locator("[data-testid='tweetButtonInline']")
     await post_btn.wait_for(state="visible", timeout=10_000)
     await post_btn.click()
@@ -104,7 +142,6 @@ async def main() -> None:
             await create_post(page, POST_TEXT)
         except PlaywrightTimeoutError as e:
             print(f"\n✗ Timeout error: {e}")
-            print("  → The page may be loading slowly. Try increasing wait times or check your connection.")
         except Exception as e:
             print(f"\n✗ Unexpected error: {e}")
         finally:
